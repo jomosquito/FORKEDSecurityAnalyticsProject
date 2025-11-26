@@ -1,27 +1,46 @@
 #!/usr/bin/env python3
 """
 DIFrauD Multilingual Data Quality Assessment
+============================================
 Analyzing Language Diversity Impact on Classification Performance
 
 Course: COSC 4371 Security Analytics - Fall 2025
 Team Members: Joseph Mascardo, Niket Gupta
 
-Project Objective:
+---
+
+Project Objective
+-----------------
 Investigate whether all samples in the DIFrauD dataset are in English, analyze
 language distribution by class and domain, and study the impact on classification performance.
 
-Research Questions:
+Research Questions
+------------------
 1. What is the language distribution across classes and domains in DIFrauD?
 2. How does removing non-English samples affect classifier performance?
 3. Do transformer-based models handle multilingual content better than traditional ML?
 
-External Sources and References:
+---
+
+External Sources and References
+-------------------------------
+
+Dataset:
 - DIFrauD Dataset: https://huggingface.co/datasets/difraud/difraud
 - Citation: Boumber, D., et al. (2024). "Domain-Agnostic Adapter Architecture for Deception Detection." LREC-COLING 2024.
-- langdetect: https://pypi.org/project/langdetect/
-- datasets: https://huggingface.co/docs/datasets/
-- transformers: https://huggingface.co/docs/transformers/
-- scikit-learn: https://scikit-learn.org/
+
+Libraries Used:
+- langdetect: https://pypi.org/project/langdetect/ - Language detection (port of Google's language-detection)
+- datasets: https://huggingface.co/docs/datasets/ - HuggingFace datasets library
+- transformers: https://huggingface.co/docs/transformers/ - HuggingFace transformers for DistilBERT
+- scikit-learn: https://scikit-learn.org/ - Traditional ML classifiers
+- pandas/numpy: Data processing
+- matplotlib/seaborn: Visualizations
+
+Key References:
+- Conneau, A., et al. (2020). "Unsupervised cross-lingual representation learning at scale." ACL 2020.
+- Devlin, J., et al. (2019). "BERT: Pre-training of deep bidirectional transformers." NAACL 2019.
+- Verma, R. M., et al. (2019). "Data quality for security challenges." ACM CCS 2019.
 """
 
 # =============================================================================
