@@ -50,7 +50,10 @@ Key References:
 # Install required packages (run once):
 # pip install datasets langdetect transformers torch scikit-learn pandas numpy matplotlib seaborn tqdm
 
+import os
 import warnings
+from getpass import getpass
+
 warnings.filterwarnings('ignore')
 
 # Data handling
@@ -83,6 +86,9 @@ from transformers import (
     Trainer, TrainingArguments, EarlyStoppingCallback
 )
 
+# Experiment tracking
+import wandb
+
 # Visualization
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -99,6 +105,51 @@ np.random.seed(SEED)
 torch.manual_seed(SEED)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(SEED)
+
+# Matplotlib style for cleaner figures
+plt.style.use('seaborn-v0_8-whitegrid')
+
+# -----------------------------------------------------------------------------
+# Weights & Biases setup (optional)
+# Enable by setting environment variable ENABLE_WANDB=true before running
+# -----------------------------------------------------------------------------
+WANDB_ENABLED = os.getenv("ENABLE_WANDB", "false").lower() == "true"
+WANDB_PROJECT = os.getenv("WANDB_PROJECT", "difraud-language-analysis")
+WANDB_ENTITY = os.getenv("WANDB_ENTITY")
+wandb_run = None
+
+
+def prompt_wandb_login():
+    """Prompt the user for a W&B API key when logging is enabled.
+
+    This keeps the workflow interactive without forcing authentication when
+    ENABLE_WANDB is false. If the WANDB_API_KEY environment variable is set,
+    the login uses that value automatically.
+    """
+
+    if not WANDB_ENABLED:
+        print("Weights & Biases logging is disabled. Set ENABLE_WANDB=true to enable.")
+        return None
+
+    print("\nWeights & Biases logging is enabled.\n" "- Set WANDB_API_KEY env var, or paste it when prompted.")
+
+    api_key = os.getenv("WANDB_API_KEY")
+    if api_key:
+        wandb.login(key=api_key)
+    else:
+        api_key = getpass("Enter your W&B API key (input hidden): ")
+        wandb.login(key=api_key)
+
+    run = wandb.init(project=WANDB_PROJECT, entity=WANDB_ENTITY, reinit=True)
+    print(f"Initialized W&B run: {run.name}")
+    return run
+
+
+def log_figure(fig, name):
+    """Log a matplotlib figure to Weights & Biases when enabled."""
+    if wandb_run is not None:
+        wandb_run.log({name: wandb.Image(fig)})
+
 
 print("All libraries imported successfully!")
 print(f"PyTorch version: {torch.__version__}")
@@ -157,6 +208,9 @@ df = load_difraud_dataset()
 print(f"\nDataset loaded successfully!")
 print(f"Total samples: {len(df):,}")
 print(f"Columns: {df.columns.tolist()}")
+
+# Optional: start a Weights & Biases run for tracking metrics and figures
+wandb_run = prompt_wandb_login()
 
 
 # Dataset overview
@@ -525,7 +579,16 @@ X_train_eng_tfidf, X_test_eng_tfidf, vectorizer_eng = \
 print(f"English-only - TF-IDF shape: {X_train_eng_tfidf.shape}")
 
 
-def train_and_evaluate_classifier(clf, X_train, X_test, y_train, y_test, clf_name, dataset_name):
+def train_and_evaluate_classifier(
+    clf,
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    clf_name,
+    dataset_name,
+    wandb_run=None,
+):
     """
     Train classifier and return evaluation metrics.
 
@@ -558,6 +621,16 @@ def train_and_evaluate_classifier(clf, X_train, X_test, y_train, y_test, clf_nam
     print(f"  F1 (macro): {metrics['F1_Macro']:.4f}")
     print(f"  Balanced Accuracy: {metrics['Balanced_Accuracy']:.4f}")
 
+    if wandb_run is not None:
+        wandb_run.log({
+            f"{clf_name}/{dataset_name}/accuracy": metrics['Accuracy'],
+            f"{clf_name}/{dataset_name}/balanced_accuracy": metrics['Balanced_Accuracy'],
+            f"{clf_name}/{dataset_name}/f1_weighted": metrics['F1_Weighted'],
+            f"{clf_name}/{dataset_name}/f1_macro": metrics['F1_Macro'],
+            f"{clf_name}/{dataset_name}/precision_weighted": metrics['Precision_Weighted'],
+            f"{clf_name}/{dataset_name}/recall_weighted": metrics['Recall_Weighted'],
+        })
+
     return metrics, y_pred, clf
 
 
@@ -582,7 +655,7 @@ rf_full = RandomForestClassifier(
 metrics_rf_full, pred_rf_full, _ = train_and_evaluate_classifier(
     rf_full, X_train_full_tfidf, X_test_full_tfidf,
     y_train_full, y_test_full,
-    'Random Forest', 'Full (Multilingual)'
+    'Random Forest', 'Full (Multilingual)', wandb_run=wandb_run
 )
 rf_results.append(metrics_rf_full)
 
@@ -598,7 +671,7 @@ rf_eng = RandomForestClassifier(
 metrics_rf_eng, pred_rf_eng, _ = train_and_evaluate_classifier(
     rf_eng, X_train_eng_tfidf, X_test_eng_tfidf,
     y_train_eng, y_test_eng,
-    'Random Forest', 'English-only'
+    'Random Forest', 'English-only', wandb_run=wandb_run
 )
 rf_results.append(metrics_rf_eng)
 
@@ -623,7 +696,7 @@ svm_full = LinearSVC(
 metrics_svm_full, pred_svm_full, _ = train_and_evaluate_classifier(
     svm_full, X_train_full_tfidf, X_test_full_tfidf,
     y_train_full, y_test_full,
-    'SVM (LinearSVC)', 'Full (Multilingual)'
+    'SVM (LinearSVC)', 'Full (Multilingual)', wandb_run=wandb_run
 )
 svm_results.append(metrics_svm_full)
 
@@ -637,7 +710,7 @@ svm_eng = LinearSVC(
 metrics_svm_eng, pred_svm_eng, _ = train_and_evaluate_classifier(
     svm_eng, X_train_eng_tfidf, X_test_eng_tfidf,
     y_train_eng, y_test_eng,
-    'SVM (LinearSVC)', 'English-only'
+    'SVM (LinearSVC)', 'English-only', wandb_run=wandb_run
 )
 svm_results.append(metrics_svm_eng)
 
@@ -700,7 +773,16 @@ def compute_metrics(eval_pred):
     }
 
 
-def train_distilbert(X_train, X_test, y_train, y_test, dataset_name, epochs=3, batch_size=16):
+def train_distilbert(
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    dataset_name,
+    epochs=3,
+    batch_size=16,
+    wandb_run=None,
+):
     """
     Train DistilBERT classifier.
 
@@ -772,6 +854,16 @@ def train_distilbert(X_train, X_test, y_train, y_test, dataset_name, epochs=3, b
         'Recall_Weighted': eval_results['eval_recall']
     }
 
+    if wandb_run is not None:
+        wandb_run.log({
+            f"DistilBERT/{dataset_name}/accuracy": metrics['Accuracy'],
+            f"DistilBERT/{dataset_name}/balanced_accuracy": metrics['Balanced_Accuracy'],
+            f"DistilBERT/{dataset_name}/f1_weighted": metrics['F1_Weighted'],
+            f"DistilBERT/{dataset_name}/f1_macro": metrics['F1_Macro'],
+            f"DistilBERT/{dataset_name}/precision_weighted": metrics['Precision_Weighted'],
+            f"DistilBERT/{dataset_name}/recall_weighted": metrics['Recall_Weighted'],
+        })
+
     print(f"\nResults for {dataset_name}:")
     print(f"  F1 (weighted): {metrics['F1_Weighted']:.4f}")
     print(f"  F1 (macro): {metrics['F1_Macro']:.4f}")
@@ -813,7 +905,8 @@ metrics_bert_full, pred_bert_full, model_full = train_distilbert(
     y_train_full_sample, y_test_full[:1000],
     'Full (Multilingual)',
     epochs=2,
-    batch_size=16
+    batch_size=16,
+    wandb_run=wandb_run
 )
 distilbert_results.append(metrics_bert_full)
 
@@ -824,7 +917,8 @@ metrics_bert_eng, pred_bert_eng, model_eng = train_distilbert(
     y_train_eng_sample, y_test_eng[:1000],
     'English-only',
     epochs=2,
-    batch_size=16
+    batch_size=16,
+    wandb_run=wandb_run
 )
 distilbert_results.append(metrics_bert_eng)
 
@@ -893,6 +987,116 @@ def evaluate_by_domain(y_true, y_pred, domains):
         })
 
     return pd.DataFrame(domain_metrics)
+
+
+def plot_language_summary(lang_summary_df, domain_lang_df):
+    """Create concise language distribution visuals for slides and reports."""
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Top detected languages
+    top_langs = lang_summary_df.head(8).reset_index().rename(columns={'index': 'Language'})
+    sns.barplot(data=top_langs, x='Count', y='Language', palette=['#2ecc71' if lang == 'en' else '#e67e22' for lang in top_langs['Language']], ax=axes[0])
+    axes[0].set_title('Top Detected Languages', fontsize=12)
+    axes[0].set_xlabel('Sample Count')
+    axes[0].set_ylabel('Language Code')
+
+    # English vs Non-English share per domain
+    domain_pct = domain_lang_df[['Domain', 'English %', 'Non-English %']].set_index('Domain')
+    domain_pct[['English %', 'Non-English %']].plot(kind='bar', stacked=True, color=['#2ecc71', '#e67e22'], ax=axes[1])
+    axes[1].set_ylabel('Percentage of Samples')
+    axes[1].set_title('Language Mix by Domain')
+    axes[1].legend(loc='upper right')
+
+    plt.tight_layout()
+    plt.savefig('presentation_language_mix.png', dpi=200, bbox_inches='tight')
+    log_figure(fig, 'presentation_language_mix')
+    plt.close(fig)
+
+
+def plot_model_performance_summary(results_df):
+    """Summarize classifier performance on multilingual vs English-only splits."""
+    paired_rows = []
+    for clf in results_df['Classifier'].unique():
+        clf_df = results_df[results_df['Classifier'] == clf]
+        if len(clf_df) < 2:
+            continue
+
+        full_rows = clf_df[clf_df['Dataset'].str.contains('Full')]
+        eng_rows = clf_df[clf_df['Dataset'].str.contains('English')]
+        if full_rows.empty or eng_rows.empty:
+            continue
+
+        full_row = full_rows.iloc[0]
+        eng_row = eng_rows.iloc[0]
+
+        paired_rows.append({'Classifier': clf, 'Dataset': 'Multilingual', 'F1_Weighted': full_row['F1_Weighted'], 'Balanced_Accuracy': full_row['Balanced_Accuracy']})
+        paired_rows.append({'Classifier': clf, 'Dataset': 'English-only', 'F1_Weighted': eng_row['F1_Weighted'], 'Balanced_Accuracy': eng_row['Balanced_Accuracy']})
+
+    perf_df = pd.DataFrame(paired_rows)
+    if perf_df.empty:
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    sns.barplot(data=perf_df, x='Classifier', y='F1_Weighted', hue='Dataset', ax=axes[0], palette=['#e67e22', '#2ecc71'])
+    axes[0].set_title('Weighted F1 by Dataset Condition')
+    axes[0].set_ylim(0, 1)
+
+    sns.barplot(data=perf_df, x='Classifier', y='Balanced_Accuracy', hue='Dataset', ax=axes[1], palette=['#e67e22', '#2ecc71'])
+    axes[1].set_title('Balanced Accuracy by Dataset Condition')
+    axes[1].set_ylim(0, 1)
+
+    for ax in axes:
+        ax.set_xlabel('')
+        ax.legend(title='Dataset', loc='lower right')
+
+    plt.tight_layout()
+    plt.savefig('presentation_model_performance.png', dpi=200, bbox_inches='tight')
+    log_figure(fig, 'presentation_model_performance')
+    plt.close(fig)
+
+
+def plot_domain_performance_comparison(domain_perf_full, domain_perf_eng):
+    """Visualize domain-level F1 shifts for Random Forest between datasets."""
+    merged = domain_perf_full.merge(domain_perf_eng, on='Domain', suffixes=('_full', '_eng'))
+    merged['DomainLabel'] = merged['Domain'].str.replace('_', ' ').str.title()
+    merged = merged.sort_values('F1_Weighted_eng')
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    y_pos = np.arange(len(merged))
+    width = 0.4
+
+    ax.barh(y_pos - width/2, merged['F1_Weighted_full'], height=width, color='#e67e22', label='Multilingual')
+    ax.barh(y_pos + width/2, merged['F1_Weighted_eng'], height=width, color='#2ecc71', label='English-only')
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(merged['DomainLabel'])
+    ax.set_xlabel('Weighted F1')
+    ax.set_title('Random Forest Performance by Domain')
+    ax.legend(loc='lower right')
+
+    plt.tight_layout()
+    plt.savefig('presentation_domain_f1.png', dpi=200, bbox_inches='tight')
+    log_figure(fig, 'presentation_domain_f1')
+    plt.close(fig)
+
+
+def plot_rf_confusion_matrices(cm_full, cm_eng):
+    """Side-by-side confusion matrices for quick error inspection."""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    sns.heatmap(cm_full, annot=True, fmt='d', cmap='Blues', ax=axes[0])
+    axes[0].set_title('RF Confusion Matrix - Multilingual')
+    axes[0].set_xlabel('Predicted')
+    axes[0].set_ylabel('Actual')
+
+    sns.heatmap(cm_eng, annot=True, fmt='d', cmap='Greens', ax=axes[1])
+    axes[1].set_title('RF Confusion Matrix - English-only')
+    axes[1].set_xlabel('Predicted')
+    axes[1].set_ylabel('Actual')
+
+    plt.tight_layout()
+    plt.savefig('presentation_confusion_matrices.png', dpi=200, bbox_inches='tight')
+    log_figure(fig, 'presentation_confusion_matrices')
+    plt.close(fig)
 
 
 print("="*60)
@@ -990,6 +1194,13 @@ plt.show()
 
 print("\nVisualization saved as 'classification_results.png'")
 
+print("\nGenerating presentation-ready visualizations...")
+plot_language_summary(lang_summary, domain_lang_df)
+plot_model_performance_summary(results_df)
+plot_domain_performance_comparison(domain_perf_full, domain_perf_eng)
+plot_rf_confusion_matrices(cm_full, cm_eng)
+print("Saved: presentation_language_mix.png, presentation_model_performance.png, presentation_domain_f1.png, presentation_confusion_matrices.png")
+
 
 # =============================================================================
 # 9. Summary and Conclusions
@@ -1044,6 +1255,9 @@ print("\nResults saved to:")
 print("  - classification_results.csv")
 print("  - language_distribution_by_domain.csv")
 print("  - difraud_language_analysis.csv")
+
+if wandb_run is not None:
+    wandb_run.finish()
 
 
 # =============================================================================
